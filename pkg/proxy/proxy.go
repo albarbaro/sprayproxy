@@ -173,7 +173,7 @@ func (p *SprayProxy) Register(c *gin.Context) {
 	}
 	for _, v := range p.backends {
 		if v == server {
-			c.String(http.StatusBadRequest, "Already there")
+			c.String(http.StatusBadRequest, "already there")
 			return
 		}
 	}
