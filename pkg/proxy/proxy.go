@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,16 +29,13 @@ const maxReqSize = 1024 * 1024 * 25
 type BackendsFunc func() []string
 
 type SprayProxy struct {
-	backends    BackendsFunc
+	backends    []string
 	insecureTLS bool
 	logger      *zap.Logger
 	fwdReqTmout time.Duration
 }
 
 func NewSprayProxy(insecureTLS bool, logger *zap.Logger, backends ...string) (*SprayProxy, error) {
-	backendFn := func() []string {
-		return backends
-	}
 
 	// forwarding request timeout of 15s, can be overriden by SPRAYPROXY_FORWARDING_REQUEST_TIMEOUT env var
 	fwdReqTmout := 15 * time.Second
@@ -47,7 +45,7 @@ func NewSprayProxy(insecureTLS bool, logger *zap.Logger, backends ...string) (*S
 	logger.Info(fmt.Sprintf("proxy forwarding request timeout set to %s", fwdReqTmout.String()))
 
 	return &SprayProxy{
-		backends:    backendFn,
+		backends:    backends,
 		insecureTLS: insecureTLS,
 		logger:      logger,
 		fwdReqTmout: fwdReqTmout,
@@ -89,7 +87,7 @@ func (p *SprayProxy) HandleProxy(c *gin.Context) {
 		}
 	}
 
-	for _, backend := range p.backends() {
+	for _, backend := range p.backends {
 		backendURL, err := url.Parse(backend)
 		if err != nil {
 			p.logger.Error("failed to parse backend "+err.Error(), zapCommonFields...)
@@ -164,7 +162,45 @@ func (p *SprayProxy) HandleProxy(c *gin.Context) {
 }
 
 func (p *SprayProxy) Backends() []string {
-	return p.backends()
+	return p.backends
+}
+
+func (p *SprayProxy) Register(c *gin.Context) {
+	server := c.Query("server")
+	if server == "" {
+		c.String(http.StatusBadRequest, "server parameter is missing")
+		return
+	}
+	for _, v := range p.backends {
+		if v == server {
+			c.String(http.StatusBadRequest, "Already there")
+			return
+		}
+	}
+	p.backends = append(p.backends, server)
+	c.String(http.StatusOK, strings.Join(p.backends, " "))
+}
+
+func (p *SprayProxy) List(c *gin.Context) {
+	b := p.Backends()
+
+	c.String(http.StatusOK, strings.Join(b, " "))
+}
+
+func (p *SprayProxy) Unregister(c *gin.Context) {
+	server := c.Query("server")
+	if server == "" {
+		c.String(http.StatusBadRequest, "server parameter is missing")
+		return
+	}
+	newBackend := []string{}
+	for _, v := range p.backends {
+		if v != server {
+			newBackend = append(newBackend, v)
+		}
+	}
+	p.backends = newBackend
+	c.String(http.StatusOK, strings.Join(p.backends, " "))
 }
 
 // InsecureSkipTLSVerify indicates if the proxy is skipping TLS verification.
